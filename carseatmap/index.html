@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Seat Map</title>
+    <style>
+        .grid-container {
+            display: grid;
+            grid-template-columns: auto auto auto;
+            gap: 10px;
+            padding: 10px;
+            font-size: 2rem;
+            width: 18rem;
+            height: 18rem;
+
+        }
+
+        .grid-item {
+            padding: 20px;
+            text-align: center;
+            border: 2px solid #000;
+            cursor: pointer;
+            width: 6rem;
+            height: 6rem;
+            line-height: 6rem;
+        }
+
+
+        .placeHolder {
+            padding-left: 20px;
+            padding-right: 20px;
+            text-align: center;
+            width: 6rem;
+            height: 6rem;
+            font-size: 4rem;
+            line-height: 6rem;
+        }
+
+        [data-state="O"] {
+            opacity: 10%;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="grid-container">
+        <div class="placeHolder">⎈</div>
+        <div class="placeHolder"></div>
+        <div class="placeHolder"></div>
+        <div class="grid-item" onclick="toggleState(0)">X</div>
+        <div class="grid-item" onclick="toggleState(1)">O</div>
+        <div class="grid-item" onclick="toggleState(2)">X</div>
+        <div class="grid-item" onclick="toggleState(3)">X</div>
+        <div class="grid-item" onclick="toggleState(4)">X</div>
+        <div class="grid-item" onclick="toggleState(5)">X</div>
+        <div class="grid-item" onclick="toggleState(6)">X</div>
+        <div class="grid-item" onclick="toggleState(7)">X</div>
+        <div class="grid-item" onclick="toggleState(8)">X</div>
+    </div>
+
+    <script>
+        const states = ['X', 'O', 'R', 'F'];
+        let currentState = 'XXXXXXXXX'; // Initial state
+
+        function toggleState(index) {
+            const gridItems = document.querySelectorAll('.grid-item');
+            let stateIndex = states.indexOf(gridItems[index].textContent);
+            stateIndex = (stateIndex + 1) % states.length;
+            gridItems[index].textContent = states[stateIndex];
+            gridItems[index].setAttribute('data-state', states[stateIndex])
+
+            // Update current state
+            currentState = currentState
+                .split('')
+                .map((s, idx) => (idx === index ? states[stateIndex] : s))
+                .join('');
+
+            // Update URL
+            window.history.pushState(null, null, '?state=' + currentState);
+        }
+
+        function loadState() {
+            const params = new URLSearchParams(window.location.search);
+            const state = params.get('state') || 'XOXXXXXXX';
+            if (state && state.length === 9) {
+                currentState = state;
+                const gridItems = document.querySelectorAll('.grid-item');
+                gridItems.forEach((item, index) => {
+                    item.textContent = currentState[index];
+                    item.setAttribute('data-state', currentState[index])
+                });
+            }
+        }
+
+        // Load state from URL on page load
+        window.onload = loadState;
+    </script>
+
+</body>
+
+</html>
