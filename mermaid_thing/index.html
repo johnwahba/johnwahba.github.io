@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simple Mermaid Diff Editor</title>
+  <!-- Mermaid JS from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      max-width: 1200px;
+    }
+    .editor-container {
+      display: flex;
+      gap: 20px;
+    }
+    .editor-half {
+      flex: 1;
+    }
+    textarea {
+      width: 100%;
+      height: 120px;
+      font-family: monospace;
+    }
+    button {
+      margin: 10px 0;
+      padding: 8px 16px;
+      font-size: 1rem;
+    }
+    .diagram-container {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-bottom: 20px;
+    }
+    h3 {
+      margin-top: 1.8em;
+      margin-bottom: 0.5em;
+    }
+  </style>
+</head>
+<body>
+  <h1>Mermaid Voice Assistant Editor</h1>
+  <div class="editor-container">
+    <div class="editor-half">
+      <h3>Editor</h3>
+      <textarea id="mermaidCode" placeholder="Enter Mermaid flowchart code here...">
+flowchart TB
+  A-->B
+  B-->C
+      </textarea>
+      <br />
+      <button id="saveBtn">Save</button>
+      <div style="display: none">
+        <div id="currentDiagram">[Current diagram will appear here]</div>
+      </div>
+    </div>
+
+    <div class="editor-half">
+      <h3>Live Diff Preview</h3>
+      <div class="diagram-container">
+        <div id="diffDiagram">[Diff preview will appear here]</div>
+      </div>
+    </div>
+  </div>
+  
+<script>
+  // Initialize Mermaid once
+  mermaid.initialize({ startOnLoad: false });
+
+  // We'll keep track of "savedCode" in a global variable
+  // so that each edit can diff against it
+  let savedCode = localStorage.getItem('savedDiagram') || "";
+
+  const saveBtn = document.getElementById('saveBtn');
+  const mermaidTextarea = document.getElementById('mermaidCode');
+  const currentDiagramEl = document.getElementById('currentDiagram');
+  const diffDiagramEl = document.getElementById('diffDiagram');
+
+  // Load saved diagram if exists
+  if (savedCode) {
+    mermaidTextarea.value = savedCode;
+  }
+
+  // Live preview on textarea changes
+  mermaidTextarea.addEventListener('input', () => {
+    const newCode = mermaidTextarea.value;
+    
+    // Always show current code in preview
+    renderMermaid(newCode, currentDiagramEl);
+    
+    // Show diff against saved version
+    if (savedCode.trim().length > 0) {
+      const diffCode = createDiffMermaid(savedCode, newCode);
+      renderMermaid(diffCode, diffDiagramEl);
+    } else {
+      diffDiagramEl.textContent = "[No saved version yet, so no diff to show]";
+    }
+  });
+
+  // Save button commits the current state
+  saveBtn.addEventListener('click', () => {
+    savedCode = mermaidTextarea.value;
+    localStorage.setItem('savedDiagram', savedCode);
+
+    // Clear diff preview since we're now in sync
+    renderMermaid(savedCode, diffDiagramEl);
+  });
+  
+  saveBtn.click();
+
+  /**
+   * Render a Mermaid diagram given `code`, placing the result into `containerEl`.
+   * We do this by generating a unique ID for each render, then using mermaidAPI.
+   */
+  function renderMermaid(code, containerEl) {
+    // Clear the container
+    containerEl.innerHTML = "";
+    // Make a random ID each time so mermaid won't confuse them
+    const uniqueId = "mermaid_" + Math.random().toString(36).substring(2, 9);
+    const tempEl = document.createElement("div");
+    tempEl.id = uniqueId;
+    tempEl.className = "mermaid";
+    tempEl.textContent = code;
+    containerEl.appendChild(tempEl);
+
+    // Mermaid render
+    mermaid.init({
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#ffffff',
+        primaryTextColor: '#000000',
+        primaryBorderColor: '#000000',
+        lineColor: '#000000',
+        secondaryColor: '#ffffff',
+        tertiaryColor: '#ffffff'
+      }
+    }, "#" + uniqueId);
+  }
+
+  function parseMermaid(code) {
+    const lines = code
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    let direction = "TB"; // default if not found
+    const edges = new Set();
+    const nodes = new Set();
+
+    // If the first line starts with 'flowchart' or 'graph', parse direction
+    let firstLineUsed = false;
+    if (
+      lines[0].toLowerCase().startsWith("flowchart") ||
+      lines[0].toLowerCase().startsWith("graph")
+    ) {
+      const parts = lines[0].split(/\s+/);
+      if (parts.length > 1) {
+        direction = parts[1];
+      }
+      firstLineUsed = true;
+    }
+
+    const edgeRegex = /^([\w]+)\s*[-]+>\s*([\w]+)$/; 
+    // This handles "A-->B". If you want to capture "A--B" or other arrow styles,
+    // you could expand the regex to something like:
+    //   /^([\w]+)\s*[-.]+[>\]]\s*([\w]+)$/
+    // or a more robust approach for all mermaid edge styles.
+
+    for (let i = firstLineUsed ? 1 : 0; i < lines.length; i++) {
+      const line = lines[i];
+      const match = line.match(edgeRegex);
+      if (match) {
+        const from = match[1];
+        const to = match[2];
+        edges.add(`${from}-->${to}`);
+        nodes.add(from);
+        nodes.add(to);
+      } else {
+        // Possibly a single-line node
+        // If it's a simple token, we treat it as a node
+        const nodeMatch = line.match(/^([\w]+)$/);
+        if (nodeMatch) {
+          nodes.add(nodeMatch[1]);
+        }
+      }
+    }
+
+    return { direction, nodes, edges };
+  }
+
+  /**
+   * Create a color-coded "diff" mermaid flowchart that merges old & new.
+   * 
+   * Edges and nodes that appear in both old & new are black (unchanged).
+   * Edges/nodes that appear only in new are green (added).
+   * Edges/nodes that appear only in old are red (removed).
+   */
+  function createDiffMermaid(oldCode, newCode) {
+    const oldParsed = parseMermaid(oldCode);
+    const newParsed = parseMermaid(newCode);
+
+    // Combine direction (default to new or old or "TB")
+    const direction = newParsed.direction || oldParsed.direction || "TB";
+
+    // Union of nodes
+    const allNodes = new Set([...oldParsed.nodes, ...newParsed.nodes]);
+    // Union of edges
+    const allEdges = [...new Set([...oldParsed.edges, ...newParsed.edges])];
+
+    // We'll build lines for a flowchart
+    // Then we'll apply "style" or "linkStyle" to color edges/nodes
+    let mermaidLines = [];
+    mermaidLines.push(`flowchart ${direction}`);
+
+    // 1) Add edges to the diagram
+    // We'll keep track of the index of each edge so we can do linkStyle i
+    allEdges.forEach((edge) => {
+      mermaidLines.push(edge);
+    });
+
+    // 2) We'll add linkStyles for each edge to color them
+    // linkStyle <index> stroke:color,stroke-width:2px;
+    let edgeIndexMap = {};
+    let idx = 0;
+    allEdges.forEach((edge) => {
+      edgeIndexMap[edge] = idx;
+      idx++;
+    });
+    let linkStyleLines = [];
+    allEdges.forEach((edge) => {
+      const i = edgeIndexMap[edge];
+      const inOld = oldParsed.edges.has(edge);
+      const inNew = newParsed.edges.has(edge);
+
+      if (inOld && inNew) {
+        // unchanged => black
+        linkStyleLines.push(`linkStyle ${i} stroke:#000,stroke-width:2px;`);
+      } else if (!inOld && inNew) {
+        // added => green
+        linkStyleLines.push(`linkStyle ${i} stroke:green,stroke-width:2px;`);
+      } else if (inOld && !inNew) {
+        // removed => red
+        linkStyleLines.push(`linkStyle ${i} stroke:red,stroke-width:2px;`);
+      }
+    });
+
+    // 3) We also color nodes with "style <node> fill:<color>,stroke:<color>"
+    let nodeStyleLines = [];
+    allNodes.forEach((node) => {
+      const inOld = oldParsed.nodes.has(node);
+      const inNew = newParsed.nodes.has(node);
+
+      if (inOld && inNew) {
+        // unchanged => black stroke, white fill
+        nodeStyleLines.push(`style ${node} stroke:#000,fill:#ffffff;`);
+      } else if (!inOld && inNew) {
+        // added => green stroke
+        nodeStyleLines.push(`style ${node} stroke:green,fill:#ffffff,stroke-width:2px;`);
+      } else if (inOld && !inNew) {
+        // removed => red stroke
+        // We'll keep it visible in the diff with red color
+        nodeStyleLines.push(`style ${node} stroke:red,fill:#ffffff,stroke-width:2px;`);
+      }
+    });
+
+    mermaidLines = mermaidLines.concat(linkStyleLines).concat(nodeStyleLines);
+
+    return mermaidLines.join("\n");
+  }
+
+  // Voice Assistant Integration
+  async function init() {
+    // Try to get API key from localStorage first
+    let apiKey = localStorage.getItem('openai_api_key');
+
+    // If not found in cache, prompt user
+    if (!apiKey) {
+      apiKey = prompt("Enter your OpenAI API key (this key will be used to mint an ephemeral token, I promise not to hit my own server with it):");
+      if (!apiKey) {
+        alert("API key is required to continue.");
+        return;
+      }
+      // Save to localStorage for next time
+      localStorage.setItem('openai_api_key', apiKey);
+    }
+
+    // Fetch an ephemeral token directly from OpenAI's API
+    const tokenResponse = await fetch("https://api.openai.com/v1/realtime/sessions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-realtime-preview-2024-12-17",
+        voice: "verse"
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      alert("Failed to fetch ephemeral token. Check your API key and try again.");
+      return;
+    }
+
+    const tokenData = await tokenResponse.json();
+    const EPHEMERAL_KEY = tokenData.client_secret.value;
+
+    // Set up WebRTC
+    const pc = new RTCPeerConnection();
+
+    // Create audio element for model responses
+    const audioEl = document.createElement("audio");
+    audioEl.autoplay = true;
+    document.body.appendChild(audioEl);
+    pc.ontrack = event => {
+      if (event.streams && event.streams[0]) {
+        audioEl.srcObject = event.streams[0];
+      }
+    };
+
+    // Get microphone access
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    } catch (err) {
+      alert("Microphone access is required.");
+      console.error(err);
+      return;
+    }
+
+    // Create data channel
+    const dc = pc.createDataChannel("oai-events");
+
+    dc.onmessage = event => {
+      try {
+        const serverEvent = JSON.parse(event.data);
+        console.log("Received event:", serverEvent);
+
+        if (serverEvent.type === "response.function_call_arguments.done") {
+          const args = JSON.parse(serverEvent.arguments);
+          if (serverEvent.name === "propose_change" && args.diagram) {
+            mermaidTextarea.value = args.diagram;
+            mermaidTextarea.dispatchEvent(new Event('input'));
+          } else if (serverEvent.name === "save") {
+            saveBtn.click();
+          }
+        }
+      } catch (error) {
+        console.error("Error parsing server event:", error);
+      }
+    };
+
+    // Create and set local description
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Post SDP to OpenAI API
+    const baseUrl = "https://api.openai.com/v1/realtime";
+    const model = "gpt-4o-realtime-preview-2024-12-17";
+    const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
+      method: "POST",
+      body: offer.sdp,
+      headers: {
+        "Authorization": `Bearer ${EPHEMERAL_KEY}`,
+        "Content-Type": "application/sdp"
+      }
+    });
+
+    const answerSDP = await sdpResponse.text();
+    const answer = { type: "answer", sdp: answerSDP };
+    await pc.setRemoteDescription(answer);
+    // Wait for data channel to open
+    await new Promise(resolve => dc.onopen = resolve);
+
+    // Send session configuration
+    function sendMermaidSessionUpdate() {
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          modalities: ["audio", "text"],
+          instructions: `
+          You are a helpful assistant for editing Mermaid diagrams. 
+          Help users modify their diagrams through voice commands.
+          Format should remail simple, with no labels on edges and only one edge per line:
+          flowchart TB
+            A-->B
+            B-->C
+          current diagram: ${mermaidTextarea.value}`,
+          voice: "sage",
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
+            create_response: true
+          },
+          tools: [
+            {
+              type: "function",
+              name: "propose_change",
+              description: "Propose a new version of the Mermaid diagram",
+              parameters: {
+                type: "object",
+                properties: {
+                  diagram: {
+                    type: "string",
+                    description: "The complete Mermaid diagram code"
+                  }
+                },
+                required: ["diagram"]
+              }
+            },
+            {
+              type: "function",
+              name: "save",
+              description: "Save the current diagram state",
+              parameters: {
+                type: "object",
+                properties: {}
+              }
+            }
+          ],
+          tool_choice: "auto"
+        }
+      };
+      dc.send(JSON.stringify(sessionUpdate));
+    }
+
+    sendMermaidSessionUpdate();
+  }
+
+  // Start voice assistant
+  init();
+
+  // Trigger initial render
+  mermaidTextarea.dispatchEvent(new Event('input'));
+</script>
+
+</body>
+</html>
